@@ -1,0 +1,323 @@
+---
+title: "Medical Analytics Case Study"
+author: "Dylan Rowe"
+date: "February 25, 2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("C:/Users/Dylan/Documents/MSDA/SEM3/Data Analytics Applications/Cancer Case study")
+CancerData <- read.csv(file = "CancerData.csv", header = TRUE, sep = ",")
+CancerData <- CancerData[,-33]
+```
+
+#Create partitions to split the Data by mean, se, worst or largest
+```{r}
+Meansp <- c(1:12)
+SEsp <- c(1,2,13:22)
+Worstsp <- c(1,2,23:32)
+```
+
+```{r}
+MeanData <- CancerData[,Meansp]
+SeData <- CancerData[,SEsp]
+WorstData <- CancerData[,Worstsp]
+```
+
+```{r}
+str(CancerData)
+```
+
+#Now we are going to convert diagnosis into a 0 to 1 scale just to make sure our coding doesn't get messed up later. A zero value means benign and a 1 value means malignant
+```{r}
+#CancerData$diagnosis <- as.factor(ifelse(CancerData$diagnosis %in% "B", 0, 1))
+```
+
+```{r}
+summary(CancerData)
+```
+
+#TO start we want to see if there are any variables with high correlation. We are going to build a correlation plot as well as calculate VIF for all the variables.
+```{r}
+library(corrplot)
+library(car)
+MeanData$d2 <- ifelse(MeanData$diagnosis %in% "B", 0, 1)
+SeData$d2 <- ifelse(SeData$diagnosis %in% "B", 0, 1)
+WorstData$d2 <- ifelse(WorstData$diagnosis %in% "B", 0, 1)
+C <- cor(MeanData[,-c(1,2)])
+D <- cor(SeData[,-c(1,2)])
+E <- cor(WorstData[,-c(1,2)])
+corrplot(C, method = "number", insig = "label_sig")
+corrplot(D, method = "number", insig = "label_sig")
+corrplot(E, method = "number", insig = "label_sig")
+```
+#Our correlation matrix is showing that we may have perfect seperation of the data in some of our variables. We will now remove the numeric dummy diagnosis variable.
+```{r}
+MeanData <- MeanData[,-13]
+SeData <- SeData[,-13]
+WorstData <- WorstData[,-13]
+```
+
+#Lets look at vif to see if that can help.
+```{r}
+vif.check <- glm(diagnosis ~ . - id, data = MeanData, family = "binomial")
+vif(vif.check)
+```
+
+```{r}
+n <- names(MeanData)
+for (i in 3:12) {
+boxplot(MeanData[,i] ~ MeanData$diagnosis, xlab = n[i])
+}
+```
+
+```{r}
+n <- names(SeData)
+for (i in 3:12) {
+boxplot(SeData[,i] ~ SeData$diagnosis, xlab = n[i])
+}
+```
+
+```{r}
+n <- names(WorstData)
+for (i in 3:12) {
+boxplot(WorstData[,i] ~ WorstData$diagnosis, xlab = n[i])
+}
+```
+
+#I believe there are 16 variables that we should remove because they are near perfect predictors. 
+#From mean; radius, perimeter, area, compactness, concavity, concave.points
+#From se; radius, perimeter, area
+#From worst; radius, perimeter, area, compactness, concavity, concave.points
+
+#It makes sense that radius, perimeter, and area would alls be so highly correlated because they are derived from the same formula.Compactness is also related to area and perimeter by formula so it also makes sense that would need to be removed as well. Moving forward we are going to exclude the same four variables for each model. We will also run a model using all of the data to see how they all compare.
+
+#First we must make a test/train split for our full data and three splits of data
+```{r}
+set.seed(123)
+train_full <- sample(1:nrow(CancerData), 0.7*nrow(CancerData))
+```
+
+```{r}
+Cancer_train <- CancerData[train_full,]
+Cancer_test <- CancerData[-train_full,]
+Mean_train <- MeanData[train_full,]
+Mean_test <- MeanData[-train_full,]
+SE_train <- SeData[train_full,]
+SE_test <- SeData[-train_full,]
+Worst_train <- WorstData[train_full,]
+Worst_test <- WorstData[-train_full,]
+```
+
+
+```{r}
+mean.log.mod = glm(diagnosis ~ texture_mean + smoothness_mean + symmetry_mean +
+                     fractal_dimension_mean, data = Mean_train, family = "binomial")
+mean.preds = predict(mean.log.mod, newdata = Mean_test, type = "response")
+mean.pred.class = ifelse(mean.preds >= 0.5, "M", "B")
+summary(mean.log.mod)
+mean.log.acc = 1 - mean(as.factor(mean.pred.class)!=Mean_test$diagnosis); mean.log.acc
+table(as.factor(mean.pred.class), Mean_test$diagnosis)
+```
+#Very bad at predicting malignant tumors
+```{r}
+se.log.mod = glm(diagnosis ~ texture_se + smoothness_se + symmetry_se +
+                     fractal_dimension_se, data = SE_train, family = "binomial")
+se.preds = predict(se.log.mod, newdata = SE_test, type = "response")
+se.pred.class = as.factor(ifelse(se.preds >= 0.5, "M", "B"))
+summary(se.log.mod)
+se.log.acc = 1- mean(se.pred.class != SE_test$diagnosis); se.log.acc
+table(se.pred.class, SE_test$diagnosis)
+```
+
+```{r}
+worst.log.mod = glm(diagnosis ~ texture_worst + smoothness_worst + symmetry_worst + 
+                      fractal_dimension_worst, data = Worst_train, family = "binomial")
+worst.preds = predict(worst.log.mod, newdata = Worst_test, type = "response")
+worst.pred.class = as.factor(ifelse(worst.preds >= 0.5, "M", "B"))
+summary(worst.log.mod)
+worst.log.acc = 1 - mean(worst.pred.class != Worst_test$diagnosis); worst.log.acc
+table(worst.pred.class, Worst_test$diagnosis)
+```
+
+#There were vif issues with texture_se and fractal_dimension_mean so we removed from the full model
+```{r}
+library(MASS)
+full.log.mod = glm(diagnosis ~ texture_mean + smoothness_mean + symmetry_mean + smoothness_se + 
+                     symmetry_se + fractal_dimension_se + texture_worst + smoothness_worst + 
+                     symmetry_worst + fractal_dimension_worst, 
+                     data = Cancer_train, family = "binomial")
+full.log.mod.step = stepAIC(full.log.mod, trace = FALSE)
+full.preds = predict(full.log.mod.step, newdata = Cancer_test, type = "response")
+full.pred.class = as.factor(ifelse(full.preds >= 0.5, "M", "B"))
+summary(full.log.mod.step)
+full.log.acc = 1 - mean(full.pred.class != Cancer_test$diagnosis); full.log.acc
+table(full.pred.class, Cancer_test$diagnosis)
+vif(full.log.mod)
+```
+
+```{r}
+library(randomForest)
+set.seed(123)
+mean.rf.mod = randomForest(diagnosis ~ . - id, data = Mean_train, importance = TRUE)
+mean.preds = predict(mean.rf.mod, newdata = Mean_test, type = "class")
+mean.rf.acc = 1 - mean(mean.preds!=Mean_test$diagnosis); mean.rf.acc
+table(mean.preds, Mean_test$diagnosis)
+```
+
+```{r}
+set.seed(123)
+se.rf.mod = randomForest(diagnosis ~ . - id, data = SE_train, importance = TRUE)
+se.preds = predict(se.rf.mod, newdata = SE_test, type = "class")
+se.rf.acc = 1 - mean(se.preds!=SE_test$diagnosis); se.rf.acc
+table(se.preds, SE_test$diagnosis)
+```
+
+```{r}
+set.seed(123)
+worst.rf.mod = randomForest(diagnosis ~ . - id, data = Worst_train, importance = TRUE)
+worst.preds = predict(worst.rf.mod, newdata = Worst_test, type = "class")
+worst.rf.acc = 1 - mean(worst.preds!=Worst_test$diagnosis); worst.rf.acc
+table(worst.preds, Worst_test$diagnosis)
+```
+
+```{r}
+set.seed(123)
+full.rf.mod = randomForest(diagnosis ~ texture_mean + smoothness_mean + symmetry_mean + 
+                              smoothness_se + symmetry_se + fractal_dimension_se + 
+                              texture_worst + smoothness_worst + symmetry_worst + 
+                              fractal_dimension_worst + compactness_se + concavity_se + 
+                             concave.points_se, 
+                            data = Cancer_train, importance = TRUE)
+full.preds = predict(full.rf.mod, newdata = Cancer_test, type = "class")
+full.rf.acc = 1 - mean(full.preds!=Cancer_test$diagnosis); full.rf.acc
+caret::confusionMatrix(full.preds, Cancer_test$diagnosis)
+```
+
+#Include every variable in the model
+```{r}
+set.seed(123)
+allvar.rf.mod = randomForest(diagnosis ~ .- id, 
+                            data = Cancer_train, importance = TRUE)
+allvar.preds = predict(allvar.rf.mod, newdata = Cancer_test, type = "class")
+allvar.rf.acc = 1 - mean(allvar.preds!=Cancer_test$diagnosis); allvar.rf.acc
+caret::confusionMatrix(allvar.preds, Cancer_test$diagnosis)
+```
+
+```{r}
+#Establish a list of parameters for mtry and ntree. Then make a hyper_grid
+mtry_values <- seq(2,6,1)
+ntree_values <- seq(1e3,10e3,1e3)
+hyper_grid <- expand.grid(mtry = mtry_values, ntree = ntree_values)
+# Create an empty vector to store OOB error values
+oob_err <- c()
+```
+
+```{r}
+set.seed(123)
+for (i in 1:nrow(hyper_grid)) {
+  #Train a random forest model
+  model = randomForest(diagnosis ~ . - id,
+        data = Cancer_train, mtry = hyper_grid$mtry[i], ntree = hyper_grid$ntree[i])
+  
+  #Store the OOB error for each model
+  oob_err[i] <- model$err.rate[length(model$err.rate)]
+}
+#Identify our optimized parameters
+opt_i <- which.min(oob_err)
+opt_mtry <- hyper_grid[opt_i,]$mtry
+opt_ntree <- hyper_grid[opt_i,]$ntree
+```
+
+```{r}
+set.seed(123)
+opt.rf.mod = randomForest(diagnosis ~ .- id, 
+                            data = Cancer_train, importance = TRUE, mtry = opt_mtry,
+                          ntree = opt_ntree)
+opt.preds = predict(opt.rf.mod, newdata = Cancer_test, type = "class")
+opt.rf.acc = 1 - mean(opt.preds!=Cancer_test$diagnosis); opt.rf.acc
+caret::confusionMatrix(opt.preds, Cancer_test$diagnosis)
+```
+
+```{r}
+library(ggplot2)
+# theme for nice plotting
+theme_nice <- theme_classic()+
+                theme(
+                  axis.line.y.left = element_line(colour = "black"),
+                  axis.line.y.right = element_line(colour = "black"),
+                  axis.line.x.bottom = element_line(colour = "black"),
+                  axis.line.x.top = element_line(colour = "black"),
+                  axis.text.y = element_text(colour = "black", size = 12),
+                  axis.text.x = element_text(color = "black", size = 12),
+                  axis.ticks = element_line(color = "black")) +
+                theme(
+                  axis.ticks.length = unit(-0.25, "cm"), 
+                  axis.text.x = element_text(margin=unit(c(0.5,0.5,0.5,0.5), "cm")), 
+                  axis.text.y = element_text(margin=unit(c(0.5,0.5,0.5,0.5), "cm")))
+```
+
+#As we can see the variables are plotted based on imporatnce in the random forest model.
+```{r}
+#Lets look at the variable importance of our random forest model
+library(ggplot2)
+library(dplyr)
+data.frame(importance = allvar.rf.mod$importance[,4] + 2) %>% 
+  log() %>%
+  tibble::rownames_to_column(var = "variable") %>%
+  ggplot(aes(x = reorder(variable,importance), y = importance)) +
+    geom_bar(stat = "identity", fill = "green", color = "black", width = 0.5)+
+    coord_flip() +
+    labs(x = "Variables", y = "Log-transformed variable importance") +
+    theme_nice
+```
+
+#We will run a SVM model using all the variables
+```{r}
+library(e1071)
+CancerData2 = CancerData
+CancerData2[,-2] = scale(CancerData[,-2])
+Cancer2_train = CancerData2[train_full,]
+Cancer2_test = CancerData2[-train_full,]
+tuned = tune.svm(diagnosis ~ . - id, data = Cancer2_train, kernel = "radial",
+                 gamma  = seq(0.01,0.1,by = 0.01),
+                 cost = seq(0.1,1,by = 0.1))
+tuned2 = tune.svm(diagnosis ~ . - id, data = Cancer2_train, kernel = "polynomial",
+                 gamma  = seq(0.01,0.1,by = 0.01),
+                 cost = seq(0.1,1,by = 0.1))
+tuned3 = tune.svm(diagnosis ~ . - id, data = Cancer2_train, kernel = "linear",
+                 gamma  = seq(0.01,0.1,by = 0.01),
+                 cost = seq(0.1,1,by = 0.1))
+```
+
+#We can see the linear model is the best model. 
+```{r}
+tuned$best.performance
+tuned2$best.performance
+tuned3$best.performance
+```
+
+```{r}
+gam = tuned3$best.parameters$gamma
+cos = tuned3$best.parameters$cost
+gam2 = tuned$best.parameters$gamma
+cos2 = tuned$best.parameters$cost
+```
+
+```{r}
+allvar.svm.lin.mod = svm(diagnosis ~ . - id, data = Cancer2_train, gamma = gam, cost = cos, kernel = "linear")
+svm.lin.preds = predict(allvar.svm.lin.mod, newdata = Cancer2_test, type = "response")
+caret::confusionMatrix(svm.lin.preds, Cancer2_test$diagnosis)
+```
+
+```{r}
+allvar.svm.rad.mod = svm(diagnosis ~ . - id, data = Cancer2_train, gamma = gam2, cost = cos2)
+svm.rad.preds = predict(allvar.svm.rad.mod, newdata = Cancer2_test, type = "response")
+caret::confusionMatrix(svm.rad.preds, Cancer2_test$diagnosis)
+```
