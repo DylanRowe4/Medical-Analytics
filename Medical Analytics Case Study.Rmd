@@ -12,7 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-setwd("C:/Users/Dylan/Documents/MSDA/SEM3/Data Analytics Applications/Cancer Case study")
+setwd(".../Cancer Case study")
 CancerData <- read.csv(file = "CancerData.csv", header = TRUE, sep = ",")
 CancerData <- CancerData[,-33]
 ```
